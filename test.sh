@@ -8,10 +8,12 @@ curl -X POST http://localhost:8080/api/v1/getparams.execute \
             "parameters": {
               "gitRepo": "https://github.com/danielmarom78/discount-appset.git",
               "gitPath": "dyn/apps",
+              "cluster": "",
+              "namespace": "discount",
               "resourcePaths": [
                 "resources.job.limits",
                 "resources.deployment.limits"
               ]
             }
           }
-        }'
+        }' | jq .

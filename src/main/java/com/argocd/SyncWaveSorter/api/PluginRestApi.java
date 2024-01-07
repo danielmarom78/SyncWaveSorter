@@ -2,6 +2,7 @@ package com.argocd.SyncWaveSorter.api;
 
 import com.argocd.SyncWaveSorter.dto.RequestPayload;
 import com.argocd.SyncWaveSorter.dto.AppInfo;
+import com.argocd.SyncWaveSorter.dto.ResponsePayload;
 import com.argocd.SyncWaveSorter.service.GitService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -25,10 +26,8 @@ import java.util.List;
         @PostMapping("/getparams.execute")
         public ResponseEntity<?> getGitRepoParameters(@RequestBody RequestPayload payload) {
             try {
-                RequestPayload.Parameters params = payload.getInput().getParameters();
-                List<AppInfo> appInfoList = gitService.processGitRepo(params.getGitRepo(),
-                        params.getGitPath(), params.getResourcePaths());
-                return ResponseEntity.ok(appInfoList);
+                ResponsePayload response = gitService.processGitRepo(payload.getInput().getParameters());
+                return ResponseEntity.ok(response);
             } catch (Exception e) {
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error processing request: " + e.getMessage());
             }

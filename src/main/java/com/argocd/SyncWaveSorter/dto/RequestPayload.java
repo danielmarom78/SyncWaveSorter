@@ -18,6 +18,8 @@ public class RequestPayload {
     public static class Parameters {
         private String gitRepo;
         private String gitPath;
+        private String cluster;
+        private String namespace;
         private List<String> resourcePaths;
     }
 }

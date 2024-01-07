@@ -1,6 +1,8 @@
 package com.argocd.SyncWaveSorter.service;
 
 import com.argocd.SyncWaveSorter.dto.AppInfo;
+import com.argocd.SyncWaveSorter.dto.RequestPayload;
+import com.argocd.SyncWaveSorter.dto.ResponsePayload;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.slf4j.Logger;
@@ -11,10 +13,7 @@ import org.yaml.snakeyaml.Yaml;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Service
 public class GitService {
@@ -22,16 +21,31 @@ public class GitService {
     private static final Logger logger = LoggerFactory.getLogger(GitService.class);
     private static final String REPO_PATH = "/tmp/clonedRepository";
 
-    public List<AppInfo> processGitRepo(String gitRepoUrl, String gitPath, List<String> resourcePaths) {
-        List<AppInfo> appInfoList = new ArrayList<>();
+    public ResponsePayload processGitRepo(RequestPayload.Parameters request) {
+        ResponsePayload response = new ResponsePayload();
         try {
-            File repoDir = cloneRepository(gitRepoUrl);
-            appInfoList = processYamlFiles(repoDir, gitPath, resourcePaths);
-            divideResourcesIntoBucketsAndAssignLabels(appInfoList, 8, 8);
+            File repoDir = cloneRepository(request.getGitRepo());
+            response.setResources(processYamlFiles(repoDir, request.getGitPath(), request.getResourcePaths()));
+            getQuotasFromCluster(request, response);
+            divideResourcesIntoBucketsAndAssignLabels(response);
         } catch (Exception e) {
             logger.error("Error processing Git repository: {}", e.getMessage(), e);
         }
-        return appInfoList;
+
+        response.sortResources();
+
+        return response;
+    }
+
+    private void getQuotasFromCluster(RequestPayload.Parameters request, ResponsePayload response) {
+        String cluster = request.getCluster();
+        String namespace = request.getNamespace();
+        float memoryLimitGi = 8;
+        float cpuLimitCores = 8;
+
+        //TODO: get Data from cluster
+
+        response.setInfo(cluster, namespace, cpuLimitCores, memoryLimitGi);
     }
 
     private File cloneRepository(String gitRepoUrl) throws GitAPIException, IOException {
@@ -148,10 +162,12 @@ public class GitService {
     }
 
 
-    public void divideResourcesIntoBucketsAndAssignLabels(List<AppInfo> resources, float memoryLimitGi, float cpuLimitCores) {
-        List<Bucket> buckets = new ArrayList<>();
+    public void divideResourcesIntoBucketsAndAssignLabels(ResponsePayload response) {
+        float cpuLimitCores = response.getCpuLimitCores();
+        float memoryLimitGi = response.getMemoryLimitGi();
 
-        for (AppInfo resource : resources) {
+        List<Bucket> buckets = new ArrayList<>();
+        for (AppInfo resource : response.getResources()) {
             for (int i = 0; ; i++) {
                 if (i > buckets.size() -1) {
                     buckets.add(new Bucket());
