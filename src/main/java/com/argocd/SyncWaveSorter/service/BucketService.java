@@ -3,8 +3,13 @@ package com.argocd.SyncWaveSorter.service;
 import com.argocd.SyncWaveSorter.dto.AppInfo;
 import com.argocd.SyncWaveSorter.dto.RequestPayload;
 import com.argocd.SyncWaveSorter.dto.ResponsePayload;
+import io.fabric8.kubernetes.api.model.ResourceQuota;
+import io.fabric8.kubernetes.client.ConfigBuilder;
+import io.fabric8.openshift.client.DefaultOpenShiftClient;
+import io.fabric8.openshift.client.OpenShiftClient;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -19,10 +24,14 @@ import java.util.List;
 import java.util.Map;
 
 @Service
-public class GitService {
+public class BucketService {
 
-    private static final Logger logger = LoggerFactory.getLogger(GitService.class);
-    private static final String REPO_PATH = "/tmp/clonedRepository";
+    private static final Logger logger = LoggerFactory.getLogger(BucketService.class);
+    private static final String CLONE_PATH = "/tmp/clonedRepository";
+    String OCP_USER_PREFIX = "OCP_USER:";
+    String OCP_PASS_PREFIX = "OCP_PASS:";
+    String GIT_USER_PREFIX = "GIT_USER:";
+    String GIT_PASS_PREFIX = "GIT_PASS:";
 
     public ResponsePayload processGitRepo(RequestPayload.Parameters request) {
         ResponsePayload response = new ResponsePayload();
@@ -43,19 +52,55 @@ public class GitService {
     private void getQuotasFromCluster(RequestPayload.Parameters request, ResponsePayload response) {
         String cluster = request.getCluster();
         String namespace = request.getNamespace();
-        float memoryLimitGi = 8;
-        float cpuLimitCores = 8;
 
-        //TODO: get Data from cluster
+        String username = System.getenv(OCP_USER_PREFIX + cluster);
+        String password = System.getenv(OCP_PASS_PREFIX + cluster);
+
+        // Initialize the OpenShift client. Credentials should be set using environment variables or secrets.
+        OpenShiftClient openShiftClient = new DefaultOpenShiftClient(new ConfigBuilder()
+                .withUsername(username)
+                .withPassword(password)
+                .build());
+        // Fetch the resource quota for the specified namespace
+        ResourceQuota quota = openShiftClient.resourceQuotas().inNamespace(namespace).list().getItems().stream()
+                .findFirst()
+                .orElse(null);
+
+        float memoryLimitGi = 0;
+        float cpuLimitCores = 0;
+
+        if (quota != null) {
+            String memoryLimit = quota.getSpec().getHard().get("limits.memory").toString();
+            String cpuLimit = quota.getSpec().getHard().get("limits.cpu").toString();
+
+            memoryLimitGi = convertMemoryStringToGi(memoryLimit);
+            cpuLimitCores = convertCpuStringToCores(cpuLimit);
+
+            logger.info("Got quota from cluster=" + cluster + " namespace=" + namespace + " cpuLimitCores=" + cpuLimitCores + " memoryLimitGi=" + memoryLimitGi);
+        } else {
+            logger.warn("No quota found for cluster=" + cluster + " namespace=" + namespace);
+        }
 
         response.setInfo(cluster, namespace, cpuLimitCores, memoryLimitGi);
     }
 
+
     private File cloneRepository(String gitRepoUrl) throws GitAPIException, IOException {
-        File repoDir = new File(REPO_PATH);
+        File repoDir = new File(CLONE_PATH);
         try {
             deleteAndCreateDirectory(repoDir);
-            Git.cloneRepository().setURI(gitRepoUrl).setDirectory(repoDir).call();
+
+            // Retrieve the username and token from environment variables
+            String githubUsername = System.getenv(GIT_USER_PREFIX + gitRepoUrl);
+            String githubToken = System.getenv(GIT_PASS_PREFIX + gitRepoUrl);
+
+            // Use the credentials for cloning
+            Git.cloneRepository()
+                    .setURI(gitRepoUrl)
+                    .setDirectory(repoDir)
+                    .setCredentialsProvider(new UsernamePasswordCredentialsProvider(githubUsername, githubToken))
+                    .call();
+
             return repoDir;
 
         } catch (IOException | GitAPIException e) {
@@ -111,7 +156,7 @@ public class GitService {
                 float cpu;
                 if (cpuObj instanceof String) {
                     String cpuStr = (String) cpuObj;
-                    cpu = convertCpuStringToFloat(cpuStr);
+                    cpu = convertCpuStringToCores(cpuStr);
                 } else {
                     cpu = (Integer) cpuObj;
                 }
@@ -127,7 +172,7 @@ public class GitService {
         return new AppInfo(filename, totalCpu, totalMemoryGi);
     }
 
-    private float convertCpuStringToFloat(String cpuStr) {
+    private float convertCpuStringToCores(String cpuStr) {
         if (cpuStr.endsWith("m")) {
             return Float.parseFloat(cpuStr.substring(0, cpuStr.length() - 1)) / 1000;
         } else {
@@ -186,7 +231,8 @@ public class GitService {
         private int totalCpuCores = 0;
 
         public boolean tryAddResource(AppInfo resource, float memoryLimitGi, float cpuLimitCores) {
-            if (totalMemoryGi + resource.getMemoryGi() <= memoryLimitGi && totalCpuCores + resource.getCpuCores() <= cpuLimitCores) {
+            if (((memoryLimitGi == 0) || ((totalMemoryGi + resource.getMemoryGi() <= memoryLimitGi)) &&
+                    ((cpuLimitCores == 0) || (totalCpuCores + resource.getCpuCores() <= cpuLimitCores)))) {
                 totalMemoryGi += resource.getMemoryGi();
                 totalCpuCores += resource.getCpuCores();
                 return true;

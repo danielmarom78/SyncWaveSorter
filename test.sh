@@ -8,7 +8,7 @@ curl -X POST http://localhost:8080/api/v1/getparams.execute \
             "parameters": {
               "gitRepo": "https://github.com/danielmarom78/discount-appset.git",
               "gitPath": "dyn/apps",
-              "cluster": "",
+              "cluster": "https://api.cluster-tjvw6.dynamic.redhatworkshops.io:6443",
               "namespace": "discount",
               "resourcePaths": [
                 "resources.job.limits",
