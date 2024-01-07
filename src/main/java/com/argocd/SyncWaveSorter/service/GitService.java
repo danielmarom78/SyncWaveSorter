@@ -13,7 +13,10 @@ import org.yaml.snakeyaml.Yaml;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class GitService {
@@ -52,10 +55,7 @@ public class GitService {
         File repoDir = new File(REPO_PATH);
         try {
             deleteAndCreateDirectory(repoDir);
-            Git.cloneRepository()
-                    .setURI(gitRepoUrl)
-                    .setDirectory(repoDir)
-                    .call();
+            Git.cloneRepository().setURI(gitRepoUrl).setDirectory(repoDir).call();
             return repoDir;
 
         } catch (IOException | GitAPIException e) {
@@ -66,9 +66,7 @@ public class GitService {
 
     private void deleteAndCreateDirectory(File directory) throws IOException {
         if (directory.exists()) {
-            Files.walk(directory.toPath())
-                    .map(Path::toFile)
-                    .sorted((o1, o2) -> -o1.compareTo(o2)) // sort in reverse order to delete files before directories
+            Files.walk(directory.toPath()).map(Path::toFile).sorted((o1, o2) -> -o1.compareTo(o2)) // sort in reverse order to delete files before directories
                     .forEach(File::delete);
             logger.info("Deleted directory: {}", directory.getAbsolutePath());
         }
@@ -109,12 +107,12 @@ public class GitService {
         for (String path : resourcePaths) {
             Map<String, Object> nestedData = getNestedMap(data, path);
             if (nestedData.containsKey("cpu")) {
-                Object cpuObj =  nestedData.get("cpu");
+                Object cpuObj = nestedData.get("cpu");
                 float cpu;
                 if (cpuObj instanceof String) {
                     String cpuStr = (String) cpuObj;
                     cpu = convertCpuStringToFloat(cpuStr);
-                }else{
+                } else {
                     cpu = (Integer) cpuObj;
                 }
 
@@ -169,7 +167,7 @@ public class GitService {
         List<Bucket> buckets = new ArrayList<>();
         for (AppInfo resource : response.getResources()) {
             for (int i = 0; ; i++) {
-                if (i > buckets.size() -1) {
+                if (i > buckets.size() - 1) {
                     buckets.add(new Bucket());
                 }
 
@@ -188,8 +186,7 @@ public class GitService {
         private int totalCpuCores = 0;
 
         public boolean tryAddResource(AppInfo resource, float memoryLimitGi, float cpuLimitCores) {
-            if (totalMemoryGi + resource.getMemoryGi() <= memoryLimitGi &&
-                    totalCpuCores + resource.getCpuCores() <= cpuLimitCores) {
+            if (totalMemoryGi + resource.getMemoryGi() <= memoryLimitGi && totalCpuCores + resource.getCpuCores() <= cpuLimitCores) {
                 totalMemoryGi += resource.getMemoryGi();
                 totalCpuCores += resource.getCpuCores();
                 return true;

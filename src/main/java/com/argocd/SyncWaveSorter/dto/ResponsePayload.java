@@ -11,6 +11,10 @@ import java.util.List;
 @Setter
 public class ResponsePayload {
     String cluster;
+    String namespace;
+    float memoryLimitGi;
+    float cpuLimitCores;
+    List<AppInfo> resources;
 
     public void setInfo(String cluster, String namespace, float cpuLimitCores, float memoryLimitGi) {
         this.cluster = cluster;
@@ -19,13 +23,7 @@ public class ResponsePayload {
         this.cpuLimitCores = cpuLimitCores;
     }
 
-
-    String namespace;
-    float memoryLimitGi;
-    float cpuLimitCores;
-    List<AppInfo> resources;
-
-    public void sortResources(){
+    public void sortResources() {
         Collections.sort(resources, new Comparator<AppInfo>() {
             @Override
             public int compare(AppInfo o1, AppInfo o2) {
