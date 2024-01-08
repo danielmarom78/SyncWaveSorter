@@ -12,21 +12,21 @@ import java.util.List;
 public class ResponsePayload {
     String cluster;
     String namespace;
-    float memoryLimitGi;
-    float cpuLimitCores;
-    List<AppInfo> resources;
+    float freeMemGi;
+    float freeCpuCores;
+    List<resourceInfo> resources;
 
-    public void setInfo(String cluster, String namespace, float cpuLimitCores, float memoryLimitGi) {
+    public void setInfo(String cluster, String namespace, float freeCpuCores, float freeMemGi) {
         this.cluster = cluster;
         this.namespace = namespace;
-        this.memoryLimitGi = memoryLimitGi;
-        this.cpuLimitCores = cpuLimitCores;
+        this.freeMemGi = freeMemGi;
+        this.freeCpuCores = freeCpuCores;
     }
 
     public void sortResources() {
-        Collections.sort(resources, new Comparator<AppInfo>() {
+        Collections.sort(resources, new Comparator<resourceInfo>() {
             @Override
-            public int compare(AppInfo o1, AppInfo o2) {
+            public int compare(resourceInfo o1, resourceInfo o2) {
                 return Integer.compare(o1.getSyncWaveBucketLabel(), o2.getSyncWaveBucketLabel());
             }
         });

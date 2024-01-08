@@ -1,8 +1,9 @@
 package com.argocd.SyncWaveSorter.service;
 
-import com.argocd.SyncWaveSorter.dto.AppInfo;
+import com.argocd.SyncWaveSorter.dto.resourceInfo;
 import com.argocd.SyncWaveSorter.dto.RequestPayload;
 import com.argocd.SyncWaveSorter.dto.ResponsePayload;
+import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.ResourceQuota;
 import io.fabric8.kubernetes.client.ConfigBuilder;
 import io.fabric8.openshift.client.DefaultOpenShiftClient;
@@ -38,7 +39,7 @@ public class BucketService {
         try {
             File repoDir = cloneRepository(request.getGitRepo());
             response.setResources(processYamlFiles(repoDir, request.getGitPath(), request.getResourcePaths()));
-            getQuotasFromCluster(request, response);
+            getFreeFromCluster(request, response);
             divideResourcesIntoBucketsAndAssignLabels(response);
         } catch (Exception e) {
             logger.error("Error processing Git repository: {}", e.getMessage(), e);
@@ -49,39 +50,63 @@ public class BucketService {
         return response;
     }
 
-    private void getQuotasFromCluster(RequestPayload.Parameters request, ResponsePayload response) {
+    private void getFreeFromCluster(RequestPayload.Parameters request, ResponsePayload response) {
         String cluster = request.getCluster();
         String namespace = request.getNamespace();
 
         String username = System.getenv(OCP_USER_PREFIX + cluster);
         String password = System.getenv(OCP_PASS_PREFIX + cluster);
 
-        // Initialize the OpenShift client. Credentials should be set using environment variables or secrets.
+        // Initialize the OpenShift client
         OpenShiftClient openShiftClient = new DefaultOpenShiftClient(new ConfigBuilder()
                 .withUsername(username)
                 .withPassword(password)
                 .build());
-        // Fetch the resource quota for the specified namespace
+
+        // Fetch the resource quota and usage for the specified namespace
         ResourceQuota quota = openShiftClient.resourceQuotas().inNamespace(namespace).list().getItems().stream()
                 .findFirst()
                 .orElse(null);
 
-        float memoryLimitGi = 0;
-        float cpuLimitCores = 0;
+        float freeMemGi = 0;
+        float freeCpuCores = 0;
 
         if (quota != null) {
-            String memoryLimit = quota.getSpec().getHard().get("limits.memory").toString();
-            String cpuLimit = quota.getSpec().getHard().get("limits.cpu").toString();
+            // Quota limits
+            Quantity memLimitQuantity = quota.getSpec().getHard().get("limits.mem");
+            Quantity cpuLimitQuantity = quota.getSpec().getHard().get("limits.cpu");
 
-            memoryLimitGi = convertMemoryStringToGi(memoryLimit);
-            cpuLimitCores = convertCpuStringToCores(cpuLimit);
+            // Default quantities for usage
+            Quantity defaultMemUsageQuantity = new Quantity("0Gi");
+            Quantity defaultCpuUsageQuantity = new Quantity("0");
 
-            logger.info("Got quota from cluster=" + cluster + " namespace=" + namespace + " cpuLimitCores=" + cpuLimitCores + " memoryLimitGi=" + memoryLimitGi);
+            // Quota usage
+            Quantity memUsageQuantity = quota.getStatus().getUsed().getOrDefault("limits.mem", defaultMemUsageQuantity);
+            Quantity cpuUsageQuantity = quota.getStatus().getUsed().getOrDefault("limits.cpu", defaultCpuUsageQuantity);
+
+            if (memLimitQuantity != null && !memLimitQuantity.getAmount().equals("0")) {
+                String memLimit = memLimitQuantity.toString();
+                String memUsage = memUsageQuantity.toString();
+                float memLimitGi = convertMemStringToGi(memLimit);
+                float memUsedGi = convertMemStringToGi(memUsage);
+                freeMemGi = memLimitGi - memUsedGi;
+            }
+
+            if (cpuLimitQuantity != null && !cpuLimitQuantity.getAmount().equals("0")) {
+                String cpuLimit = cpuLimitQuantity.toString();
+                String cpuUsage = cpuUsageQuantity.toString();
+                float cpuLimitCores = convertCpuStringToCores(cpuLimit);
+                float cpuUsedCores = convertCpuStringToCores(cpuUsage);
+                freeCpuCores = cpuLimitCores - cpuUsedCores;
+            }
+
+            logger.info("Got quota from cluster=" + cluster + " namespace=" + namespace +
+                    " freeCpuCores=" + freeCpuCores + " freeMemGi=" + freeMemGi);
         } else {
             logger.warn("No quota found for cluster=" + cluster + " namespace=" + namespace);
         }
 
-        response.setInfo(cluster, namespace, cpuLimitCores, memoryLimitGi);
+        response.setInfo(cluster, namespace, freeCpuCores, freeMemGi);
     }
 
 
@@ -121,8 +146,8 @@ public class BucketService {
     }
 
 
-    private List<AppInfo> processYamlFiles(File repoDir, String gitPath, List<String> resourcePaths) {
-        List<AppInfo> resourceInfos = new ArrayList<>();
+    private List<resourceInfo> processYamlFiles(File repoDir, String gitPath, List<String> resourcePaths) {
+        List<resourceInfo> resourceInfoList = new ArrayList<>();
         File dir = new File(repoDir, gitPath);
         File[] yamlFiles = dir.listFiles((d, name) -> name.endsWith(".yaml") || name.endsWith(".yml"));
 
@@ -131,8 +156,8 @@ public class BucketService {
                 try (InputStream in = new FileInputStream(file)) {
                     Yaml yaml = new Yaml();
                     Map<String, Object> data = yaml.load(in);
-                    AppInfo appInfo = extractResourceInfo(file.getName(), data, resourcePaths);
-                    resourceInfos.add(appInfo);
+                    resourceInfo resourceInfo = extractResourceInfo(file.getName(), data, resourcePaths);
+                    resourceInfoList.add(resourceInfo);
                 } catch (FileNotFoundException e) {
                     logger.error("YAML file not found: {}", file.getName(), e);
                 } catch (Exception e) {
@@ -142,12 +167,12 @@ public class BucketService {
         } else {
             logger.warn("No YAML files found in the directory: {}", dir.getAbsolutePath());
         }
-        return resourceInfos;
+        return resourceInfoList;
     }
 
-    private AppInfo extractResourceInfo(String filename, Map<String, Object> data, List<String> resourcePaths) {
+    private resourceInfo extractResourceInfo(String filename, Map<String, Object> data, List<String> resourcePaths) {
         float totalCpu = 0.0f;
-        float totalMemoryGi = 0.0f;
+        float totalMemGi = 0.0f;
 
         for (String path : resourcePaths) {
             Map<String, Object> nestedData = getNestedMap(data, path);
@@ -164,12 +189,12 @@ public class BucketService {
                 totalCpu += cpu;
             }
             if (nestedData.containsKey("memory")) {
-                String memoryStr = (String) nestedData.get("memory");
-                totalMemoryGi += convertMemoryStringToGi(memoryStr);
+                String memStr = (String) nestedData.get("memory");
+                totalMemGi += convertMemStringToGi(memStr);
             }
         }
 
-        return new AppInfo(filename, totalCpu, totalMemoryGi);
+        return new resourceInfo(filename, totalCpu, totalMemGi);
     }
 
     private float convertCpuStringToCores(String cpuStr) {
@@ -180,13 +205,13 @@ public class BucketService {
         }
     }
 
-    private float convertMemoryStringToGi(String memoryStr) {
-        if (memoryStr.endsWith("Mi")) {
-            return Float.parseFloat(memoryStr.substring(0, memoryStr.length() - 2)) / 1024;
-        } else if (memoryStr.endsWith("Gi")) {
-            return Float.parseFloat(memoryStr.substring(0, memoryStr.length() - 2));
+    private float convertMemStringToGi(String memStr) {
+        if (memStr.endsWith("Mi")) {
+            return Float.parseFloat(memStr.substring(0, memStr.length() - 2)) / 1024;
+        } else if (memStr.endsWith("Gi")) {
+            return Float.parseFloat(memStr.substring(0, memStr.length() - 2));
         }
-        throw new NumberFormatException("could not convert " + memoryStr);
+        throw new NumberFormatException("could not convert " + memStr);
     }
 
     private Map<String, Object> getNestedMap(Map<String, Object> data, String path) {
@@ -206,11 +231,11 @@ public class BucketService {
 
 
     public void divideResourcesIntoBucketsAndAssignLabels(ResponsePayload response) {
-        float cpuLimitCores = response.getCpuLimitCores();
-        float memoryLimitGi = response.getMemoryLimitGi();
+        float freeCpuCores = response.getFreeCpuCores();
+        float freeMemGi = response.getFreeMemGi();
 
         List<Bucket> buckets = new ArrayList<>();
-        for (AppInfo resource : response.getResources()) {
+        for (resourceInfo resource : response.getResources()) {
             for (int i = 0; ; i++) {
                 if (i > buckets.size() - 1) {
                     buckets.add(new Bucket());
@@ -218,7 +243,7 @@ public class BucketService {
 
                 Bucket bucket = buckets.get(i);
 
-                if (bucket.tryAddResource(resource, memoryLimitGi, cpuLimitCores)) {
+                if (bucket.tryAddResource(resource, freeMemGi, freeCpuCores)) {
                     resource.setSyncWaveBucketLabel(i);
                     break;
                 }
@@ -227,13 +252,13 @@ public class BucketService {
     }
 
     public class Bucket {
-        private int totalMemoryGi = 0;
+        private int totalMemGi = 0;
         private int totalCpuCores = 0;
 
-        public boolean tryAddResource(AppInfo resource, float memoryLimitGi, float cpuLimitCores) {
-            if (((memoryLimitGi == 0) || ((totalMemoryGi + resource.getMemoryGi() <= memoryLimitGi)) &&
+        public boolean tryAddResource(resourceInfo resource, float memLimitGi, float cpuLimitCores) {
+            if (((memLimitGi == 0) || ((totalMemGi + resource.getMemGi() <= memLimitGi)) &&
                     ((cpuLimitCores == 0) || (totalCpuCores + resource.getCpuCores() <= cpuLimitCores)))) {
-                totalMemoryGi += resource.getMemoryGi();
+                totalMemGi += resource.getMemGi();
                 totalCpuCores += resource.getCpuCores();
                 return true;
             } else {

@@ -5,15 +5,15 @@ import lombok.Setter;
 
 @Getter
 @Setter
-public class AppInfo {
+public class resourceInfo {
     private String filename;
     private float cpuCores;
-    private float memoryGi; // in GiB
+    private float memGi; // in GiB
     private int syncWaveBucketLabel;
 
-    public AppInfo(String filename, float cpuCores, float memoryGi) {
+    public resourceInfo(String filename, float cpuCores, float memGi) {
         this.filename = filename;
         this.cpuCores = cpuCores;
-        this.memoryGi = memoryGi;
+        this.memGi = memGi;
     }
 }
